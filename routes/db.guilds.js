@@ -1,75 +1,44 @@
-import { Router } from 'express';
-import Guild from '../models/Guild.js';
+// /var/www/groupify.gg/api/routes/db.guilds.js
+import express from "express";
+import { GuildConfig } from "../models/GuildConfig.js";
 
-const router = Router();
+const router = express.Router();
 
-/**
- * GET /api/db/guilds/:guildId
- * Returns a guild doc (creates if missing).
- * Accepts optional ?name=&icon= to seed basic info.
- */
-router.get('/:guildId', async (req, res) => {
-  const { guildId } = req.params;
-  const { name, icon } = req.query;
-
+// GET /api/db/guilds/:guildId/config
+router.get("/:guildId/config", async (req, res) => {
   try {
-    let doc = await Guild.findOne({ guildId });
-    if (!doc) {
-      doc = await Guild.create({ guildId, name, icon });
-    } else if (name || icon) {
-      if (name) doc.name = name;
-      if (icon) doc.icon = icon;
-      await doc.save();
+    const { guildId } = req.params;
+
+    let config = await GuildConfig.findOne({ guildId });
+
+    // If no config exists yet, create a default one
+    if (!config) {
+      config = await GuildConfig.create({ guildId });
     }
-    res.json(doc);
+
+    res.json({ ok: true, config });
   } catch (err) {
-    console.error('GET guild error:', err);
-    res.status(500).json({ error: 'db_error' });
+    console.error("Error fetching guild config", err);
+    res.status(500).json({ ok: false, error: "Failed to fetch guild config" });
   }
 });
 
-/**
- * PATCH /api/db/guilds/:guildId
- * Body: { adminRoleId?, paymentText? }
- */
-router.patch('/:guildId', async (req, res) => {
-  const { guildId } = req.params;
-  const { adminRoleId, paymentText } = req.body || {};
-
+// PUT /api/db/guilds/:guildId/config
+router.put("/:guildId/config", async (req, res) => {
   try {
-    const update = {};
-    if (typeof adminRoleId === 'string') update.adminRoleId = adminRoleId;
-    if (typeof paymentText === 'string') update.paymentText = paymentText;
+    const { guildId } = req.params;
+    const update = req.body || {};
 
-    const doc = await Guild.findOneAndUpdate(
+    const config = await GuildConfig.findOneAndUpdate(
       { guildId },
       { $set: update },
       { new: true, upsert: true }
     );
 
-    res.json(doc);
+    res.json({ ok: true, config });
   } catch (err) {
-    console.error('PATCH guild error:', err);
-    res.status(500).json({ error: 'db_error' });
-  }
-});
-
-/**
- * POST /api/db/guilds/:guildId/install
- * Marks the bot as installed (panel “Invite Bot” success).
- */
-router.post('/:guildId/install', async (req, res) => {
-  const { guildId } = req.params;
-  try {
-    const doc = await Guild.findOneAndUpdate(
-      { guildId },
-      { $set: { botInstalledAt: new Date() } },
-      { new: true, upsert: true }
-    );
-    res.json(doc);
-  } catch (err) {
-    console.error('INSTALL mark error:', err);
-    res.status(500).json({ error: 'db_error' });
+    console.error("Error updating guild config", err);
+    res.status(500).json({ ok: false, error: "Failed to update guild config" });
   }
 });
 
