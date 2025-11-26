@@ -10,7 +10,6 @@ import fetch from "node-fetch";
 import { connectDB } from "./db.js";
 import dbGuildRoutes from "./routes/db.guilds.js";
 import discordAuthRoutes from "./routes/auth.discord.js";
-console.log("Server boot MONGO_URI:", process.env.MONGO_URI);
 
 const app = express();
 
@@ -22,10 +21,12 @@ const {
   DISCORD_REDIRECT_URI,
 } = process.env;
 
-// trust proxy for secure cookies behind Nginx
+console.log("Server boot MONGO_URI:", process.env.MONGO_URI);
+
+// trust proxy for correct IPs / headers behind nginx
 app.set("trust proxy", 1);
 
-// connect DB (will warn if MONGO_URI missing)
+// connect to Mongo (non-fatal if MONGO_URI missing, per db.js)
 connectDB();
 
 // middleware
@@ -38,6 +39,7 @@ app.use(
   })
 );
 
+// session middleware
 app.use(
   session({
     name: "gfy.sid",
@@ -46,36 +48,37 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
+      // host-only cookie for panel.groupify.gg (NO domain here)
+      path: "/",
       sameSite: "lax",
-      secure: true, // HTTPS via Nginx
+      secure: false, // fine while debugging; can flip to true later
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
     },
   })
 );
 
-// ---------------------------------------
-// Health
-// ---------------------------------------
+// ----------------------
+// Health check
+// ----------------------
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------------------------------------
-// Auth routes (we created auth.discord.js earlier)
-// ---------------------------------------
+// ----------------------
+// Routes
+// ----------------------
 app.use("/api/auth/discord", discordAuthRoutes);
-
-// ---------------------------------------
-// DB Guild config routes
-// ---------------------------------------
 app.use("/api/db/guilds", dbGuildRoutes);
 
-// ---------------------------------------
-// /api/guilds – list user's Discord guilds
-// ---------------------------------------
-
+// ----------------------
+// /api/guilds – list user's Discord servers
+// ----------------------
+// ----------------------
+// /api/guilds – list user's Discord servers (admin/manage only)
+// ----------------------
 app.get("/api/guilds", async (req, res) => {
   console.log("📥 GET /api/guilds, sessionID:", req.sessionID);
+  console.log("📥 Raw Cookie header:", req.headers.cookie);
   console.log("📥 Session discordToken:", req.session?.discordToken);
 
   const token = req.session?.discordToken?.access_token;
@@ -99,7 +102,23 @@ app.get("/api/guilds", async (req, res) => {
         .json({ error: "Failed to fetch guilds from Discord" });
     }
 
-    const guilds = await r.json();
+    const rawGuilds = await r.json();
+
+    // Permissions are a string; use BigInt for safety
+    const ADMIN = 1n << 3n;        // 0x00000008
+    const MANAGE_GUILD = 1n << 5n; // 0x00000020
+    const ADMIN_LIKE = ADMIN | MANAGE_GUILD;
+
+    const guilds = rawGuilds.filter((g) => {
+      if (!g.permissions) return false;
+      try {
+        const perms = BigInt(g.permissions);
+        return (perms & ADMIN_LIKE) !== 0n;
+      } catch {
+        return false;
+      }
+    });
+
     return res.json(guilds);
   } catch (err) {
     console.error("Guilds endpoint error", err);
@@ -107,9 +126,10 @@ app.get("/api/guilds", async (req, res) => {
   }
 });
 
-// ---------------------------------------
-// /api/guilds/:guildId/invite – invite bot to a server
-// ---------------------------------------
+
+// ----------------------
+// /api/guilds/:guildId/invite – generate bot invite url
+// ----------------------
 app.get("/api/guilds/:guildId/invite", (req, res) => {
   const { guildId } = req.params;
 
@@ -120,7 +140,7 @@ app.get("/api/guilds/:guildId/invite", (req, res) => {
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
     scope: "bot applications.commands",
-    permissions: "8", // admin-ish; tweak later
+    permissions: "8", // adjust later
     guild_id: guildId,
     response_type: "code",
     redirect_uri: DISCORD_REDIRECT_URI || "",
@@ -130,16 +150,16 @@ app.get("/api/guilds/:guildId/invite", (req, res) => {
   return res.json({ url });
 });
 
-// ---------------------------------------
+// ----------------------
 // 404 fallback
-// ---------------------------------------
+// ----------------------
 app.use((req, res) => {
   res.status(404).json({ error: "Not found" });
 });
 
-// ---------------------------------------
+// ----------------------
 // Start server
-// ---------------------------------------
+// ----------------------
 app.listen(PORT, () => {
   console.log(`✅ Groupify API (session mode) running on ${PORT}`);
 });

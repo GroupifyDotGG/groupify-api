@@ -1,4 +1,3 @@
-// /var/www/groupify.gg/api/routes/auth.discord.js
 import express from "express";
 import fetch from "node-fetch";
 
@@ -62,14 +61,6 @@ router.get("/callback", async (req, res) => {
 
     const tokenData = await tokenRes.json();
 
-    console.log("✅ Discord callback OK, sessionID:", req.sessionID);
-    console.log("✅ Discord token stored:", {
-      access_token: tokenData.access_token,
-      token_type: tokenData.token_type,
-      expires_in: tokenData.expires_in,
-    });
-
-    return res.redirect(FRONTEND_ORIGIN + "/");
     if (!tokenRes.ok) {
       console.error("Discord token error:", tokenData);
       return res
@@ -80,7 +71,20 @@ router.get("/callback", async (req, res) => {
     // stash tokens in session for /api/guilds to use
     req.session.discordToken = tokenData;
 
-    return res.redirect(FRONTEND_ORIGIN + "/");
+    console.log("✅ Discord callback OK, sessionID:", req.sessionID);
+    console.log("✅ Discord token stored:", {
+      access_token: tokenData.access_token,
+      token_type: tokenData.token_type,
+      expires_in: tokenData.expires_in,
+    });
+
+    // ensure session is saved before redirecting to panel
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error:", err);
+      }
+      return res.redirect(FRONTEND_ORIGIN + "/");
+    });
   } catch (err) {
     console.error("Discord callback error:", err);
     return res.status(500).send("Internal error handling Discord callback");
